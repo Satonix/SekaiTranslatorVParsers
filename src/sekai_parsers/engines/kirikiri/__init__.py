@@ -1,5 +1,9 @@
 from __future__ import annotations
 
-from . import ks_parser  # noqa: F401
+from ...engine_registry import register_engine
+from .ks_parser import KiriKiriKsParser
 
-__all__ = ["ks_parser"]
+def _factory():
+    return KiriKiriKsParser()
+
+register_engine("kirikiri.ks", _factory)
