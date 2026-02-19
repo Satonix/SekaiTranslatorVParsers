@@ -22,13 +22,14 @@ class _ParseState:
 
 
 class KirikiriKsParser:
-    \"\"\"KiriKiri `.ks` parser focused on stable round-trip.
+    """KiriKiri `.ks` parser focused on stable round-trip.
+
 
     Supported pattern (as seen in *Forbidden Love Wife Sister*):
     - Speaker tag: [cn name="..."] (may contain other attributes)
     - The following one or more *non-tag* lines are treated as text until the next tag line.
     - Lines starting with ';' (comments) are ignored.
-    \"\"\"
+    """
 
     engine_id = "kirikiri.ks"
     extensions = (".ks",)
