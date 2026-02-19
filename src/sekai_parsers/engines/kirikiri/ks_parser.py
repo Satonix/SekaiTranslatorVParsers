@@ -125,5 +125,5 @@ class KiriKiriKsParser:
                 continue
             out = out[:sp.start] + repl + out[sp.end:]
 
-       return out.encode("utf-8")
+        return out.encode("utf-8")
 
