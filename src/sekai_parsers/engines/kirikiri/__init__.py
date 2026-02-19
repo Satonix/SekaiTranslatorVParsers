@@ -1,3 +1,5 @@
-from .ks_parser import KirikiriKsParser
+from __future__ import annotations
 
-__all__ = ["KirikiriKsParser"]
+from . import ks_parser  # noqa: F401
+
+__all__ = ["ks_parser"]
