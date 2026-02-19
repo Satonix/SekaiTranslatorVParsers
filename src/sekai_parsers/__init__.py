@@ -3,20 +3,15 @@ from __future__ import annotations
 from .engine_registry import get_engine, list_engines, register_engine
 
 def discover_engines() -> None:
-    """
-    Importa automaticamente todos os módulos em sekai_parsers.engines
-    para executar os register_engine() no import.
-    """
     import importlib
     import pkgutil
+    from . import engines as engines_pkg
 
-    pkg_name = __name__ + ".engines"
-    pkg = importlib.import_module(pkg_name)
-
-    for m in pkgutil.iter_modules(pkg.__path__, pkg_name + "."):
+    # importa todo submódulo dentro de sekai_parsers.engines
+    for m in pkgutil.iter_modules(engines_pkg.__path__, engines_pkg.__name__ + "."):
         importlib.import_module(m.name)
 
-# Descobre no import do pacote
+# descobre ao importar o pacote
 discover_engines()
 
 __all__ = ["get_engine", "list_engines", "register_engine", "discover_engines"]
