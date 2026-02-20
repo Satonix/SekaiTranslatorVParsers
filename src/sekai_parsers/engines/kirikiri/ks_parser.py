@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
 
 from ...api import Entry, ParseResult
 from ...utils.text import normalize_newlines
@@ -21,14 +20,41 @@ class KiriKiriProfile:
     rx_tag_only: re.Pattern
 
 
-# Profile default (compatível com seu parser antigo)
 DEFAULT_PROFILE = KiriKiriProfile(
     id="default",
     speaker_tag=re.compile(r'^\[cn\s+name="([^"]+)"(?:[^\]]*)\]\s*$', re.IGNORECASE),
-    rx_comment=re.compile(r'^\s*;'),
-    rx_label=re.compile(r'^\s*\*'),
-    rx_tag_only=re.compile(r'^\s*(?:\[[^\]]+\]\s*)+$'),
+    rx_comment=re.compile(r"^\s*;"),
+    rx_label=re.compile(r"^\s*\*"),
+    rx_tag_only=re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$"),
 )
+
+
+# ------------------------------------------------------------------
+# Helpers (encoding)
+# ------------------------------------------------------------------
+
+def _detect_encoding(data: bytes) -> str:
+    """
+    KiriKiri .ks antigos frequentemente são CP932 (Shift-JIS).
+    Estratégia mínima:
+    - se decodificar utf-8 sem UnicodeDecodeError -> utf-8
+    - senão -> cp932
+    """
+    try:
+        data.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        return "cp932"
+
+
+def _decode_text(data: bytes) -> tuple[str, str]:
+    enc = _detect_encoding(data)
+    text = data.decode(enc, errors="replace")
+    return text, enc
+
+
+def _encode_text(text: str, enc: str) -> bytes:
+    return text.encode(enc, errors="replace")
 
 
 # ------------------------------------------------------------------
@@ -63,16 +89,14 @@ class KiriKiriKsParser:
 
     def can_parse(self, *, file_path: str | None = None, data: bytes | None = None) -> bool:
         fp = (file_path or "").lower()
-        if fp.endswith(".ks"):
-            return True
-        return False
+        return fp.endswith(".ks")
 
     # -----------------------
     # Parse
     # -----------------------
 
     def parse(self, data: bytes, *, file_path: str | None = None) -> ParseResult:
-        text = data.decode("utf-8", errors="replace")
+        text, _enc = _decode_text(data)
         text_nl = normalize_newlines(text)
 
         entries: list[Entry] = []
@@ -109,6 +133,7 @@ class KiriKiriKsParser:
             key = f"{file_path or 'file'}:{key_idx}"
             key_idx += 1
 
+            # mantém o newline do original (keepends=True)
             entries.append(
                 Entry(
                     key=key,
@@ -131,13 +156,11 @@ class KiriKiriKsParser:
         *,
         file_path: str | None = None,
     ) -> bytes:
-
-        original_text = normalize_newlines(data.decode("utf-8", errors="replace"))
+        original_text, enc = _decode_text(data)
+        original_text = normalize_newlines(original_text)
         lines = original_text.splitlines(keepends=True)
 
-        by_key: dict[str, str] = {
-            e.key: e.text for e in entries if getattr(e, "key", None)
-        }
+        by_key: dict[str, str] = {e.key: e.text for e in entries if getattr(e, "key", None)}
 
         out_lines: list[str] = []
         key_idx = 0
@@ -174,7 +197,13 @@ class KiriKiriKsParser:
             repl = by_key.get(key)
             if repl is None:
                 out_lines.append(line)
-            else:
-                out_lines.append(repl)
+                continue
 
-        return "".join(out_lines).encode("utf-8")
+            # --- FIX: preservar o final de linha do original ---
+            # Se o original tinha '\n' (normalize_newlines), e a tradução veio sem '\n', adiciona.
+            if line.endswith("\n") and not repl.endswith("\n"):
+                repl = repl + "\n"
+
+            out_lines.append(repl)
+
+        return _encode_text("".join(out_lines), enc)
