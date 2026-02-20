@@ -21,6 +21,13 @@ _TAG_LINE_RE = re.compile(r'^\s*(\[[^\]]*\]|\*[^\s].*)\s*$')
 class _ParseState:
     speaker: str | None = None
 
+@dataclass(slots=True)
+class _LegacyEntry:
+    key: str
+    text: str
+    speaker: str | None = None
+    meta: dict | None = None
+
 
 # ---------------------------------------------------------------------
 # Tipos mínimos para compat com o sekai-ui (manager espera .blocks e .meta)
@@ -82,7 +89,7 @@ class KiriKiriKsParser:
             blocks.append(
                 TextBlock(
                     block_id=str(e.key),
-                    text=str(e.original),
+                    text=str(getattr(e, 'text', '')),
                     speaker=getattr(e, "speaker", None),
                     translatable=True,
                     meta=getattr(e, "meta", {}) or {},
@@ -140,7 +147,7 @@ class KiriKiriKsParser:
 
     def parse_legacy(self, data: bytes, *, file_path: str | None = None):
         # Import local pra evitar ciclos no import do pacote
-        from ...api import Entry, ParseResult  # type: ignore
+# type: ignore
 
         text = data.decode("utf-8", errors="replace")
         text_nl = normalize_newlines(text)
@@ -203,17 +210,16 @@ class KiriKiriKsParser:
             key_idx += 1
 
             entries.append(
-                Entry(
+                _LegacyEntry(
                     key=key,
-                    original=block_text,
-                    translation="",
+                    text=block_text,
                     speaker=state.speaker,
                     meta={},
                 )
             )
             spans.append(TextSpan(start=start, end=end, key=key))
 
-        return ParseResult(
+        return LegacyParseResult(
             engine_id=self.engine_id,
             original_text=text_nl,
             entries=entries,
@@ -221,13 +227,13 @@ class KiriKiriKsParser:
         )
 
     def export_legacy(self, result: Any, entries: Iterable[Any]) -> bytes:
-        # Map key -> replacement text (translation if present, else original)
+        # Map block_id -> replacement text (block.text)
         by_key: dict[str, str] = {}
-        for e in entries:
-            tr = getattr(e, "translation", "")
-            orig = getattr(e, "original", "")
-            repl = tr if (tr is not None and tr != "") else orig
-            by_key[str(getattr(e, "key", ""))] = str(repl)
+        for b in entries:
+            bid = str(getattr(b, "block_id", "") or "")
+            if not bid:
+                continue
+            by_key[bid] = str(getattr(b, "text", "") or "")
 
         out = str(getattr(result, "original_text", ""))
 
