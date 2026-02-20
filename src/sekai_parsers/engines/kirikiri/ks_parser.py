@@ -1,16 +1,19 @@
+# src/sekai_parsers/engines/kirikiri/ks_parser.py
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable, Optional
 
-from ...api import Entry, ParseResult
 from ...utils.text import normalize_newlines
 from .ks_model import TextSpan
 
+# ---------------------------------------------------------------------
+# Regras do dialeto (Forbidden Love Wife Sister)
+# ---------------------------------------------------------------------
 
 _CN_TAG_RE = re.compile(r'^\[cn\s+name="([^"]+)"(?:[^\]]*)\]\s*$', re.IGNORECASE)
-# We treat any bracketed command/tag line as non-text control.
+# Qualquer linha que seja um comando/tag (ex: [xxx] ou *label) é controle.
 _TAG_LINE_RE = re.compile(r'^\s*(\[[^\]]*\]|\*[^\s].*)\s*$')
 
 
@@ -19,19 +22,126 @@ class _ParseState:
     speaker: str | None = None
 
 
-class KiriKiriKsParser:
-    """KiriKiri `.ks` parser focused on stable round-trip.
+# ---------------------------------------------------------------------
+# Tipos mínimos para compat com o sekai-ui (manager espera .blocks e .meta)
+# ---------------------------------------------------------------------
 
-    Supported pattern (as seen in *Forbidden Love Wife Sister*):
-    - Speaker tag: [cn name="..."] (may contain other attributes)
-    - The following one or more *non-tag* lines are treated as text until the next tag line.
-    - Lines starting with ';' (comments) are ignored.
+@dataclass(slots=True)
+class TextBlock:
+    block_id: str
+    text: str
+    speaker: str | None = None
+    translatable: bool = True
+    meta: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class ParseOutput:
+    blocks: list[TextBlock]
+    meta: Any  # vamos guardar o ParseResult legacy aqui
+
+
+@dataclass(slots=True)
+class CompileOutput:
+    data: bytes
+
+
+# ---------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------
+
+class KiriKiriKsParser:
+    """
+    KiriKiri `.ks` parser focado em round-trip estável.
+
+    Padrão suportado (como em *Forbidden Love Wife Sister*):
+    - Tag de speaker: [cn name="..."] (pode ter outros atributos)
+    - As linhas seguintes NÃO-tag são texto até a próxima tag
+    - Linhas começando com ';' são comentários e são ignoradas
     """
 
     engine_id = "kirikiri.ks"
     extensions = (".ks",)
 
-    def parse(self, data: bytes, *, file_path: str | None = None) -> ParseResult:
+    # -------------------------
+    # Contrato NOVO (sekai-ui)
+    # -------------------------
+
+    def can_parse(self, *, file_path: str = "", data: bytes = b"") -> bool:
+        # Detecção simples por extensão
+        fp = (file_path or "").lower()
+        if fp.endswith(".ks"):
+            return True
+        return False
+
+    def parse(self, *, file_path: str = "", data: bytes = b"") -> ParseOutput:
+        legacy = self.parse_legacy(data, file_path=file_path)
+
+        blocks: list[TextBlock] = []
+        for e in legacy.entries:
+            blocks.append(
+                TextBlock(
+                    block_id=str(e.key),
+                    text=str(e.original),
+                    speaker=getattr(e, "speaker", None),
+                    translatable=True,
+                    meta=getattr(e, "meta", {}) or {},
+                )
+            )
+
+        # meta carrega o ParseResult legacy inteiro (necessário pro export)
+        return ParseOutput(blocks=blocks, meta=legacy)
+
+    def compile(
+        self,
+        *,
+        file_path: str = "",
+        blocks: list[Any] | None = None,
+        meta: Any = None,
+    ) -> CompileOutput:
+        """
+        Converte blocks -> entries e chama export_legacy(meta, entries).
+        IMPORTANTE: meta DEVE ser o ParseResult original retornado pelo parse().
+        """
+        if meta is None:
+            raise RuntimeError("compile() requer meta=ParseResult (round-trip).")
+
+        # Import local pra não quebrar imports em tempo de carga
+        from ...api import Entry  # type: ignore
+
+        entries: list[Entry] = []
+        for b in (blocks or []):
+            key = getattr(b, "block_id", None) or getattr(b, "key", None)
+            if not key:
+                continue
+
+            text = getattr(b, "text", "")
+            speaker = getattr(b, "speaker", None)
+            bmeta = getattr(b, "meta", None) or {}
+
+            # export_legacy usa translation se não vazia, senão original.
+            # Para manter original quando não houver tradução, colocamos original=text também.
+            entries.append(
+                Entry(
+                    key=str(key),
+                    original=str(text),
+                    translation=str(text),
+                    speaker=speaker,
+                    meta=dict(bmeta) if isinstance(bmeta, dict) else {},
+                )
+            )
+
+        out = self.export_legacy(meta, entries)
+        return CompileOutput(data=out)
+
+    # -------------------------
+    # Contrato LEGACY (repo antigo)
+    # -------------------------
+
+    def parse_legacy(self, data: bytes, *, file_path: str | None = None):
+        # Import local pra evitar ciclos no import do pacote
+        from ...api import Entry, ParseResult  # type: ignore
+
         text = data.decode("utf-8", errors="replace")
         text_nl = normalize_newlines(text)
 
@@ -68,7 +178,7 @@ class KiriKiriKsParser:
                 i += 1
                 continue
 
-            # Text block: consume consecutive non-tag/non-comment lines
+            # Text block: consome linhas consecutivas que não são tag/comentário
             block_start_off = line_start
             block_lines = [line]
             i += 1
@@ -110,20 +220,23 @@ class KiriKiriKsParser:
             spans=spans,
         )
 
-    def export(self, result: ParseResult, entries: Iterable[Entry]) -> bytes:
+    def export_legacy(self, result: Any, entries: Iterable[Any]) -> bytes:
         # Map key -> replacement text (translation if present, else original)
         by_key: dict[str, str] = {}
         for e in entries:
-            repl = e.translation if (e.translation is not None and e.translation != "") else e.original
-            by_key[e.key] = repl
+            tr = getattr(e, "translation", "")
+            orig = getattr(e, "original", "")
+            repl = tr if (tr is not None and tr != "") else orig
+            by_key[str(getattr(e, "key", ""))] = str(repl)
 
-        out = result.original_text
-        # Apply replacements from back to front to keep offsets stable
-        for sp in sorted(result.spans, key=lambda s: s.start, reverse=True):
-            repl = by_key.get(sp.key)
+        out = str(getattr(result, "original_text", ""))
+
+        spans = getattr(result, "spans", None) or []
+        # aplica de trás pra frente pra manter offsets
+        for sp in sorted(spans, key=lambda s: s.start, reverse=True):
+            repl = by_key.get(getattr(sp, "key", None))
             if repl is None:
                 continue
-            out = out[:sp.start] + repl + out[sp.end:]
+            out = out[: sp.start] + repl + out[sp.end :]
 
         return out.encode("utf-8")
-
