@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 
 from ...api import Entry, ParseResult
-from ...utils.text import normalize_newlines
 
 
 # ------------------------------------------------------------------
@@ -30,16 +29,10 @@ DEFAULT_PROFILE = KiriKiriProfile(
 
 
 # ------------------------------------------------------------------
-# Helpers (encoding)
+# Helpers (encoding + EOL)
 # ------------------------------------------------------------------
 
 def _detect_encoding(data: bytes) -> str:
-    """
-    KiriKiri .ks antigos frequentemente são CP932 (Shift-JIS).
-    Estratégia mínima:
-    - se decodificar utf-8 sem UnicodeDecodeError -> utf-8
-    - senão -> cp932
-    """
     try:
         data.decode("utf-8")
         return "utf-8"
@@ -49,12 +42,22 @@ def _detect_encoding(data: bytes) -> str:
 
 def _decode_text(data: bytes) -> tuple[str, str]:
     enc = _detect_encoding(data)
-    text = data.decode(enc, errors="replace")
-    return text, enc
+    return data.decode(enc, errors="replace"), enc
 
 
 def _encode_text(text: str, enc: str) -> bytes:
     return text.encode(enc, errors="replace")
+
+
+def _line_eol(line: str) -> str:
+    # preserva o EOL exato do original
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    if line.endswith("\r"):
+        return "\r"
+    return ""
 
 
 # ------------------------------------------------------------------
@@ -67,43 +70,28 @@ class _ParseState:
 
 
 class KiriKiriKsParser:
-    """
-    Parser KiriKiri (.ks)
-
-    Regras:
-    - 1 entry por linha de texto
-    - [r] e [cr] NÃO causam merge
-    - speaker definido por tag do profile
-    - round-trip estável
-    """
-
     extensions = (".ks",)
 
     def __init__(self, profile: KiriKiriProfile = DEFAULT_PROFILE):
         self.profile = profile
         self.engine_id = f"kirikiri.ks.{profile.id}"
 
-    # -----------------------
-    # Detecção
-    # -----------------------
-
     def can_parse(self, *, file_path: str | None = None, data: bytes | None = None) -> bool:
-        fp = (file_path or "").lower()
-        return fp.endswith(".ks")
+        return (file_path or "").lower().endswith(".ks")
 
     # -----------------------
     # Parse
     # -----------------------
 
     def parse(self, data: bytes, *, file_path: str | None = None) -> ParseResult:
+        # NÃO normaliza newlines — preserva CRLF/LF
         text, _enc = _decode_text(data)
-        text_nl = normalize_newlines(text)
 
         entries: list[Entry] = []
         state = _ParseState()
         key_idx = 0
 
-        lines = text_nl.splitlines(keepends=True)
+        lines = text.splitlines(keepends=True)
 
         for line in lines:
             stripped = line.strip()
@@ -111,29 +99,24 @@ class KiriKiriKsParser:
             if not stripped:
                 continue
 
-            # comentário
             if self.profile.rx_comment.match(stripped):
                 continue
 
-            # label (*scene, *|)
             if self.profile.rx_label.match(stripped):
                 continue
 
-            # tag de speaker
             m_speaker = self.profile.speaker_tag.match(stripped)
             if m_speaker:
                 state.speaker = m_speaker.group(1)
                 continue
 
-            # linha só de tag (ex: [cm], [GL ...], [quake ...][wq])
             if self.profile.rx_tag_only.match(stripped):
                 continue
 
-            # TEXTO (1 entry por linha)
             key = f"{file_path or 'file'}:{key_idx}"
             key_idx += 1
 
-            # mantém o newline do original (keepends=True)
+            # Entry.text mantém a linha original (incluindo EOL)
             entries.append(
                 Entry(
                     key=key,
@@ -149,15 +132,9 @@ class KiriKiriKsParser:
     # Export
     # -----------------------
 
-    def export(
-        self,
-        data: bytes,
-        entries: list[Entry],
-        *,
-        file_path: str | None = None,
-    ) -> bytes:
+    def export(self, data: bytes, entries: list[Entry], *, file_path: str | None = None) -> bytes:
+        # NÃO normaliza newlines — preserva CRLF/LF
         original_text, enc = _decode_text(data)
-        original_text = normalize_newlines(original_text)
         lines = original_text.splitlines(keepends=True)
 
         by_key: dict[str, str] = {e.key: e.text for e in entries if getattr(e, "key", None)}
@@ -199,10 +176,10 @@ class KiriKiriKsParser:
                 out_lines.append(line)
                 continue
 
-            # --- FIX: preservar o final de linha do original ---
-            # Se o original tinha '\n' (normalize_newlines), e a tradução veio sem '\n', adiciona.
-            if line.endswith("\n") and not repl.endswith("\n"):
-                repl = repl + "\n"
+            # FIX: garantir que a linha substituída preserve o EOL do original
+            eol = _line_eol(line)
+            if eol and not repl.endswith(("\r\n", "\n", "\r")):
+                repl = repl + eol
 
             out_lines.append(repl)
 
