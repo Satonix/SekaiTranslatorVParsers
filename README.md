@@ -2,13 +2,6 @@
 
 This repository is the canonical home of **engine parsers** used by SekaiTranslatorV.
 
-## Goals
-
-- Small, dependency-free core.
-- Deterministic **round-trip**: parse → export with unchanged entries must reproduce the exact file bytes
-  (except for newline normalization if you choose to enforce it).
-- Parsers are pure-Python and do **not** depend on the UI repository.
-
 ## Repository layout
 
 ```
@@ -38,4 +31,5 @@ tests/
 ## License
 
 MIT (see `LICENSE`).
+
 
