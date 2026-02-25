@@ -18,7 +18,7 @@ class KiriKiriProfile:
 
 DEFAULT_PROFILE = KiriKiriProfile(
     id="default",
-    speaker_tag=re.compile(r'^\[cn\s+name="([^"]+)"(?:[^\]]*)\]\s*$', re.IGNORECASE),
+    speaker_tag=re.compile(r'\[cn\s+name="([^"]+)"', re.IGNORECASE),
     rx_comment=re.compile(r"^\s*;"),
     rx_label=re.compile(r"^\s*\*"),
     rx_tag_only=re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$"),
@@ -92,10 +92,12 @@ class KiriKiriKsParser:
             if self.profile.rx_label.match(stripped):
                 continue
 
-            m_speaker = self.profile.speaker_tag.match(stripped)
+            m_speaker = self.profile.speaker_tag.search(stripped)
             if m_speaker:
+                # Atualiza o speaker atual. Se a linha for só tags, não vira Entry.
                 state.speaker = m_speaker.group(1)
-                continue
+                if self.profile.rx_tag_only.match(stripped):
+                    continue
 
             if self.profile.rx_tag_only.match(stripped):
                 continue
@@ -141,11 +143,13 @@ class KiriKiriKsParser:
                 out_lines.append(line)
                 continue
 
-            m_speaker = self.profile.speaker_tag.match(stripped)
+            m_speaker = self.profile.speaker_tag.search(stripped)
             if m_speaker:
+                # Atualiza o speaker atual. Se a linha for só tags, não vira Entry/edit.
                 state.speaker = m_speaker.group(1)
-                out_lines.append(line)
-                continue
+                if self.profile.rx_tag_only.match(stripped):
+                    out_lines.append(line)
+                    continue
 
             if self.profile.rx_tag_only.match(stripped):
                 out_lines.append(line)
