@@ -1,4 +1,4 @@
-# SekaiTranslator-Parsers (Option A)
+# SekaiTranslator-Parsers
 
 This repository is the canonical home of **engine parsers** used by SekaiTranslatorV.
 
@@ -33,8 +33,9 @@ tests/
 
 ## Current engines
 
-- `kirikiri.ks` — KiriKiri `.ks` scripts (supports the tag pattern used by *Forbidden Love Wife Sister*).
+- `kirikiri.ks` — KiriKiri `.ks` scripts
 
 ## License
 
 MIT (see `LICENSE`).
+
