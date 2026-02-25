@@ -1,6 +1,6 @@
 # SekaiTranslator-Parsers
 
-This repository is the canonical home of **engine parsers** used by SekaiTranslatorV.
+Esse é o repositório oficial de **parsers** do SekaiTranslatorV
 
 ## Repository layout
 
@@ -31,5 +31,6 @@ tests/
 ## License
 
 MIT (see `LICENSE`).
+
 
 
