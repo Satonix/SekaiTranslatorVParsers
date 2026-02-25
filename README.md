@@ -2,35 +2,36 @@
 
 Esse é o repositório oficial de **parsers** do SekaiTranslatorV
 
-## Repository layout
+## Layout
 
 ```
 src/sekai_parsers/
-  api.py                 # public types: Entry, ParseResult, Parser
-  registry.py            # engine registration + lookup
+  api.py                 # pública tipos: Entry, ParseResult, Parser
+  registry.py            # engine registro + busca
   engines/
     kirikiri/
       ks_parser.py       # .ks parser (KiriKiri family)
-      ks_model.py        # internal helpers for round-trip editing
+      ks_model.py        # helpers internos para edição dos arquivos Scripts
 tests/
   fixtures/
   ...
 ```
 
-## Adding a new parser
+## Adicionando um novo parser
 
-1. Create a folder under `src/sekai_parsers/engines/<engine_id>/`.
-2. Implement a parser class that follows `sekai_parsers.api.Parser`.
-3. Register it via `sekai_parsers.registry.register_engine(...)`.
-4. Add a fixture file and a **round-trip test**.
+1. Crie uma pasta em`src/sekai_parsers/engines/<engine_id>/`.
+2. Implemente uma classe com base no`sekai_parsers.api.Parser`.
+3. Regisstre `sekai_parsers.registry.register_engine(...)`.
+4. Adicione im arquivo de fixture file im **arquivo de teste**.
 
-## Current engines
+## Engines suportadas
 
 - `kirikiri.ks` — KiriKiri `.ks` scripts
 
-## License
+## Licença
 
-MIT (see `LICENSE`).
+MIT (ver `LICENSE`).
+
 
 
 
