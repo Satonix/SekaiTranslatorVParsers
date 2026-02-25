@@ -18,11 +18,24 @@ class KiriKiriProfile:
 
 DEFAULT_PROFILE = KiriKiriProfile(
     id="default",
-    speaker_tag=re.compile(r'\[cn\s+name="([^"]+)"', re.IGNORECASE),
+    # Common speaker tags across KiriKiri/KAG dialects.
+    # - Standard KAG: [cn name="Name"]
+    # - Yandere dialect: [P_NAME s_cn="Name"]
+    # Keep it anchored to full tag lines to avoid false positives.
+    speaker_tag=re.compile(
+        r'^(?:\[cn\s+name="([^"]+)"(?:[^\]]*)\]\s*$|'
+        r'\[P_NAME\b[^\]]*\bs_cn="([^"]+)"[^\]]*\]\s*$)',
+        re.IGNORECASE,
+    ),
     rx_comment=re.compile(r"^\s*;"),
     rx_label=re.compile(r"^\s*\*"),
     rx_tag_only=re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$"),
 )
+
+
+# KiriKiri control suffixes often found at end of dialogue lines.
+# Examples: "Hello.[r]", "Hello?[cr]", "Line[r][cr]".
+_RX_TRAILING_CONTROLS = re.compile(r"(?:\[(?:cr|r)\])+$", re.IGNORECASE)
 
 
 # Helpers (encoding + EOL)
@@ -92,12 +105,19 @@ class KiriKiriKsParser:
             if self.profile.rx_label.match(stripped):
                 continue
 
+            # Speaker tags may appear inside a tag line; use search() for robustness.
             m_speaker = self.profile.speaker_tag.search(stripped)
             if m_speaker:
-                # Atualiza o speaker atual. Se a linha for só tags, não vira Entry.
-                state.speaker = m_speaker.group(1)
-                if self.profile.rx_tag_only.match(stripped):
-                    continue
+                # Support profiles/patterns with multiple capture groups.
+                sp = ""
+                try:
+                    sp = (m_speaker.group(1) or "")
+                    if not sp and m_speaker.lastindex and m_speaker.lastindex >= 2:
+                        sp = (m_speaker.group(2) or "")
+                except Exception:
+                    sp = ""
+                state.speaker = sp or state.speaker
+                continue
 
             if self.profile.rx_tag_only.match(stripped):
                 continue
@@ -105,13 +125,21 @@ class KiriKiriKsParser:
             key = f"{file_path or 'file'}:{key_idx}"
             key_idx += 1
 
+            # Strip trailing KiriKiri control tags like [r]/[cr] from the stored entry text,
+            # but keep them in meta so export can restore them deterministically.
+            eol = _line_eol(line)
+            body = line[:-len(eol)] if eol else line
+            m_tail = _RX_TRAILING_CONTROLS.search(body)
+            tail = m_tail.group(0) if m_tail else ""
+            body_wo_tail = body[: -len(tail)] if tail else body
+
             # Entry.text mantém a linha original
             entries.append(
                 Entry(
                     key=key,
-                    text=line,
+                    text=body_wo_tail + eol,
                     speaker=state.speaker,
-                    meta={},
+                    meta={"kk_tail": tail},
                 )
             )
 
@@ -122,7 +150,7 @@ class KiriKiriKsParser:
         original_text, enc = _decode_text(data)
         lines = original_text.splitlines(keepends=True)
 
-        by_key: dict[str, str] = {e.key: e.text for e in entries if getattr(e, "key", None)}
+        by_key: dict[str, Entry] = {e.key: e for e in entries if getattr(e, "key", None)}
 
         out_lines: list[str] = []
         key_idx = 0
@@ -145,11 +173,16 @@ class KiriKiriKsParser:
 
             m_speaker = self.profile.speaker_tag.search(stripped)
             if m_speaker:
-                # Atualiza o speaker atual. Se a linha for só tags, não vira Entry/edit.
-                state.speaker = m_speaker.group(1)
-                if self.profile.rx_tag_only.match(stripped):
-                    out_lines.append(line)
-                    continue
+                sp = ""
+                try:
+                    sp = (m_speaker.group(1) or "")
+                    if not sp and m_speaker.lastindex and m_speaker.lastindex >= 2:
+                        sp = (m_speaker.group(2) or "")
+                except Exception:
+                    sp = ""
+                state.speaker = sp or state.speaker
+                out_lines.append(line)
+                continue
 
             if self.profile.rx_tag_only.match(stripped):
                 out_lines.append(line)
@@ -158,14 +191,38 @@ class KiriKiriKsParser:
             key = f"{file_path or 'file'}:{key_idx}"
             key_idx += 1
 
-            repl = by_key.get(key)
-            if repl is None:
+            ent = by_key.get(key)
+            if ent is None:
                 out_lines.append(line)
                 continue
 
+            repl = ent.text
+
+            # Restore trailing KiriKiri control tags that were stripped on parse.
+            tail = ""
+            try:
+                tail = (ent.meta or {}).get("kk_tail") or ""
+            except Exception:
+                tail = ""
+
             eol = _line_eol(line)
-            if eol and not repl.endswith(("\r\n", "\n", "\r")):
-                repl = repl + eol
+            # Normalize replacement to have the original EOL.
+            if eol:
+                # separate any existing eol
+                repl_body = repl
+                repl_eol = _line_eol(repl_body)
+                if repl_eol:
+                    repl_body = repl_body[:-len(repl_eol)]
+
+                # avoid duplicating tail if user kept it
+                if tail and not repl_body.endswith(tail):
+                    repl_body = repl_body + tail
+
+                repl = repl_body + eol
+            else:
+                # no original eol; still restore tail if needed
+                if tail and not repl.endswith(tail):
+                    repl = repl + tail
 
             out_lines.append(repl)
 
