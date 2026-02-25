@@ -6,10 +6,7 @@ from dataclasses import dataclass
 from ...api import Entry, ParseResult
 
 
-# ------------------------------------------------------------------
 # Profile
-# ------------------------------------------------------------------
-
 @dataclass(frozen=True, slots=True)
 class KiriKiriProfile:
     id: str
@@ -28,10 +25,7 @@ DEFAULT_PROFILE = KiriKiriProfile(
 )
 
 
-# ------------------------------------------------------------------
 # Helpers (encoding + EOL)
-# ------------------------------------------------------------------
-
 def _detect_encoding(data: bytes) -> str:
     try:
         data.decode("utf-8")
@@ -60,10 +54,7 @@ def _line_eol(line: str) -> str:
     return ""
 
 
-# ------------------------------------------------------------------
 # Parser
-# ------------------------------------------------------------------
-
 @dataclass(slots=True)
 class _ParseState:
     speaker: str | None = None
@@ -79,12 +70,8 @@ class KiriKiriKsParser:
     def can_parse(self, *, file_path: str | None = None, data: bytes | None = None) -> bool:
         return (file_path or "").lower().endswith(".ks")
 
-    # -----------------------
     # Parse
-    # -----------------------
-
     def parse(self, data: bytes, *, file_path: str | None = None) -> ParseResult:
-        # NÃO normaliza newlines — preserva CRLF/LF
         text, _enc = _decode_text(data)
 
         entries: list[Entry] = []
@@ -116,7 +103,7 @@ class KiriKiriKsParser:
             key = f"{file_path or 'file'}:{key_idx}"
             key_idx += 1
 
-            # Entry.text mantém a linha original (incluindo EOL)
+            # Entry.text mantém a linha original
             entries.append(
                 Entry(
                     key=key,
@@ -128,12 +115,8 @@ class KiriKiriKsParser:
 
         return ParseResult(engine_id=self.engine_id, entries=entries)
 
-    # -----------------------
     # Export
-    # -----------------------
-
     def export(self, data: bytes, entries: list[Entry], *, file_path: str | None = None) -> bytes:
-        # NÃO normaliza newlines — preserva CRLF/LF
         original_text, enc = _decode_text(data)
         lines = original_text.splitlines(keepends=True)
 
@@ -176,7 +159,6 @@ class KiriKiriKsParser:
                 out_lines.append(line)
                 continue
 
-            # FIX: garantir que a linha substituída preserve o EOL do original
             eol = _line_eol(line)
             if eol and not repl.endswith(("\r\n", "\n", "\r")):
                 repl = repl + eol
