@@ -52,6 +52,13 @@ DEFAULT_PROFILE = MusicaProfile(
     dialog_pairs=(),
 )
 
+_COMMON_DIALOG_PAIRS: tuple[tuple[str, str], ...] = (
+    ("“", "”"),
+    ("\"", "\""),
+    ("「", "」"),
+    ("『", "』"),
+)
+
 
 def _decode_table(s: str) -> str:
     if not s:
@@ -118,7 +125,7 @@ def _split_lead_tail_ws(s: str) -> Tuple[str, str, str]:
     return lead, core, tail
 
 
-def _unwrap_profile_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
+def _unwrap_known_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
     if not text:
         return text, "", ""
 
@@ -126,29 +133,27 @@ def _unwrap_profile_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str,
     opens: list[str] = []
     closes: list[str] = []
 
+    profile_pairs = tuple(profile.dialog_pairs or ())
+    all_pairs = profile_pairs + tuple(
+        p for p in _COMMON_DIALOG_PAIRS if p not in profile_pairs
+    )
+
     while True:
         matched = False
 
-        if profile.id == "ef":
-            m = _RX_EF_WRAPPER.match(current)
-            if m:
-                open_token = "\x81" + m.group(1)
-                inner = m.group(2)
-                close_token = "\x81" + m.group(3)
+        m = _RX_EF_WRAPPER.match(current)
+        if m:
+            open_token = "\x81" + m.group(1)
+            inner = m.group(2)
+            close_token = "\x81" + m.group(3)
 
-                opens.append(open_token)
-                closes.insert(0, close_token)
-                current = inner
-                matched = True
-
-            if not matched and current.startswith("“") and current.endswith("”") and len(current) >= 2:
-                opens.append("“")
-                closes.insert(0, "”")
-                current = current[1:-1]
-                matched = True
+            opens.append(open_token)
+            closes.insert(0, close_token)
+            current = inner
+            matched = True
 
         if not matched:
-            for op, cl in profile.dialog_pairs:
+            for op, cl in all_pairs:
                 if current.startswith(op) and current.endswith(cl) and len(current) >= len(op) + len(cl):
                     current = current[len(op):-len(cl)]
                     opens.append(op)
@@ -249,7 +254,7 @@ class MusicaScParser:
             body_lead, body_core_raw, body_tail = _split_lead_tail_ws(body_raw)
             body_core_visible = _decode_table(body_core_raw)
 
-            editor_core, dialog_open, dialog_close = _unwrap_profile_dialog(
+            editor_core, dialog_open, dialog_close = _unwrap_known_dialog(
                 body_core_visible,
                 self.profile,
             )
