@@ -42,7 +42,7 @@ _RX_CONTROL_ONLY = re.compile(r"^\s*(?:\\[A-Za-z]+[0-9]*)+\s*$")
 @dataclass(frozen=True, slots=True)
 class MusicaProfile:
     id: str
-    dialog_pairs: tuple[tuple[str, str], ...]
+    dialog_pairs: tuple[tuple[str, str], ...] = ()
 
 
 DEFAULT_PROFILE = MusicaProfile(
@@ -95,9 +95,11 @@ def _line_eol(line: str) -> str:
 def _split_suffix(text: str) -> Tuple[str, str]:
     if not text:
         return text, ""
+
     m = _RX_SUFFIX.match(text)
     if not m:
         return text, ""
+
     body = m.group(1) or ""
     suf = text[len(body):]
     return body, suf
@@ -114,15 +116,27 @@ def _split_lead_tail_ws(s: str) -> Tuple[str, str, str]:
     return lead, core, tail
 
 
-def _strip_dialog_wrappers(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
+def _unwrap_nested_dialog_wrappers(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
     if not text:
         return text, "", ""
 
-    for op, cl in profile.dialog_pairs:
-        if text.startswith(op) and text.endswith(cl) and len(text) >= len(op) + len(cl):
-            return text[len(op):-len(cl)], op, cl
+    current = text
+    opens: list[str] = []
+    closes: list[str] = []
 
-    return text, "", ""
+    while True:
+        matched = False
+        for op, cl in profile.dialog_pairs:
+            if current.startswith(op) and current.endswith(cl) and len(current) >= len(op) + len(cl):
+                current = current[len(op):-len(cl)]
+                opens.append(op)
+                closes.insert(0, cl)
+                matched = True
+                break
+        if not matched:
+            break
+
+    return current, "".join(opens), "".join(closes)
 
 
 def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
@@ -180,7 +194,7 @@ class MusicaScParser:
 
     def __init__(self, profile: MusicaProfile = DEFAULT_PROFILE):
         self.profile = profile
-        self.engine_id = f"musica.sc.{profile.id}"
+        self.engine_id = "musica.sc" if profile.id == "default" else f"musica.sc.{profile.id}"
 
     def can_parse(self, *, file_path: str | None = None, data: bytes | None = None) -> bool:
         return (file_path or "").lower().endswith(".sc")
@@ -211,16 +225,20 @@ class MusicaScParser:
 
             body_lead, body_core_raw, body_tail = _split_lead_tail_ws(body_raw)
             body_core_visible = _decode_table(body_core_raw)
-            editor_text, dialog_open, dialog_close = _strip_dialog_wrappers(body_core_visible, self.profile)
 
-            if editor_text == "" and body_core_visible != "":
-                editor_text = body_core_visible
+            editor_core, dialog_open, dialog_close = _unwrap_nested_dialog_wrappers(
+                body_core_visible,
+                self.profile,
+            )
+
+            if editor_core == "" and body_core_visible != "":
+                editor_core = body_core_visible
 
             key = f"{file_path or 'file'}:{i}"
             entries.append(
                 Entry(
                     key=key,
-                    text=f"{body_lead}{editor_text}{body_tail}",
+                    text=f"{body_lead}{editor_core}{body_tail}",
                     speaker=speaker or None,
                     meta={
                         "line_index": i,
@@ -272,19 +290,21 @@ class MusicaScParser:
             dialog_open = str(meta.get("dialog_open") or "")
             dialog_close = str(meta.get("dialog_close") or "")
 
-            body_txt = ent.text
+            body_txt = ent.text or ""
             repl_eol = _line_eol(body_txt)
             if repl_eol:
                 body_txt = body_txt[:-len(repl_eol)]
 
             body_core = body_txt
-            if dialog_open and dialog_close:
+            if dialog_open or dialog_close:
                 body_core = f"{dialog_open}{body_core}{dialog_close}"
 
             body_txt_enc = _encode_table(body_core)
             body_txt_enc = f"{body_lead}{body_txt_enc}{body_tail}"
 
             chan_s = str(meta.get("chan") or (chan or ""))
-            out_lines.append(f"{ws}{chan_s}.message{sp1}{msgno}{sp2}{prefix}{body_txt_enc}{suf}{newline}")
+            out_lines.append(
+                f"{ws}{chan_s}.message{sp1}{msgno}{sp2}{prefix}{body_txt_enc}{suf}{newline}"
+            )
 
         return _encode_text("".join(out_lines), enc)
