@@ -4,5 +4,7 @@ from ..sc_parser import MusicaProfile
 
 EF_PROFILE = MusicaProfile(
     id="ef",
-    dialog_pairs=(),
+    dialog_pairs=(
+        ("“", "”"),
+    ),
 )

@@ -141,6 +141,12 @@ def _unwrap_profile_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str,
                 current = inner
                 matched = True
 
+            if not matched and current.startswith("“") and current.endswith("”") and len(current) >= 2:
+                opens.append("“")
+                closes.insert(0, "”")
+                current = current[1:-1]
+                matched = True
+
         if not matched:
             for op, cl in profile.dialog_pairs:
                 if current.startswith(op) and current.endswith(cl) and len(current) >= len(op) + len(cl):
