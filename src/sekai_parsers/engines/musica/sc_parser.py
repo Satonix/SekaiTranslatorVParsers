@@ -38,6 +38,8 @@ _RX_SUFFIX = re.compile(
 )
 _RX_CONTROL_ONLY = re.compile(r"^\s*(?:\\[A-Za-z]+[0-9]*)+\s*$")
 
+_RX_EF_WRAPPER = re.compile(r"^\x81(.)((?:.|\n|\r)*)\x81(.)$", re.DOTALL)
+
 
 @dataclass(frozen=True, slots=True)
 class MusicaProfile:
@@ -116,7 +118,7 @@ def _split_lead_tail_ws(s: str) -> Tuple[str, str, str]:
     return lead, core, tail
 
 
-def _unwrap_nested_dialog_wrappers(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
+def _unwrap_profile_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
     if not text:
         return text, "", ""
 
@@ -126,13 +128,28 @@ def _unwrap_nested_dialog_wrappers(text: str, profile: MusicaProfile) -> Tuple[s
 
     while True:
         matched = False
-        for op, cl in profile.dialog_pairs:
-            if current.startswith(op) and current.endswith(cl) and len(current) >= len(op) + len(cl):
-                current = current[len(op):-len(cl)]
-                opens.append(op)
-                closes.insert(0, cl)
+
+        if profile.id == "ef":
+            m = _RX_EF_WRAPPER.match(current)
+            if m:
+                open_token = "\x81" + m.group(1)
+                inner = m.group(2)
+                close_token = "\x81" + m.group(3)
+
+                opens.append(open_token)
+                closes.insert(0, close_token)
+                current = inner
                 matched = True
-                break
+
+        if not matched:
+            for op, cl in profile.dialog_pairs:
+                if current.startswith(op) and current.endswith(cl) and len(current) >= len(op) + len(cl):
+                    current = current[len(op):-len(cl)]
+                    opens.append(op)
+                    closes.insert(0, cl)
+                    matched = True
+                    break
+
         if not matched:
             break
 
@@ -147,7 +164,7 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
     if not s:
         return lead_ws, "", "", ""
 
-    if s.startswith(("", '"', "“", "「", "『")):
+    if s.startswith(("\x81", '"', "“", "「", "『")):
         body_raw, suf = _split_suffix(s)
         return lead_ws, "", body_raw, suf
 
@@ -167,7 +184,7 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
                 prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
                 return prefix, speaker, body_raw, suf
 
-            if re.fullmatch(r"[A-Za-z0-9_]+", cand) and rest_after_cand.startswith(("", '"', "“", "「", "『")):
+            if re.fullmatch(r"[A-Za-z0-9_]+", cand) and rest_after_cand.startswith(("\x81", '"', "“", "「", "『")):
                 speaker = cand.strip()
                 body_raw, suf = _split_suffix(rest_after_cand)
                 prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
@@ -180,7 +197,7 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
     if m_sp:
         cand = m_sp.group(1)
         rest_after = m_sp.group(3)
-        if rest_after.startswith(("", '"', "“", "「", "『")):
+        if rest_after.startswith(("\x81", '"', "“", "「", "『")):
             prefix = lead_ws + s[: m_sp.start(3)]
             body_raw, suf = _split_suffix(rest_after)
             return prefix, cand.strip(), body_raw, suf
@@ -226,7 +243,7 @@ class MusicaScParser:
             body_lead, body_core_raw, body_tail = _split_lead_tail_ws(body_raw)
             body_core_visible = _decode_table(body_core_raw)
 
-            editor_core, dialog_open, dialog_close = _unwrap_nested_dialog_wrappers(
+            editor_core, dialog_open, dialog_close = _unwrap_profile_dialog(
                 body_core_visible,
                 self.profile,
             )
