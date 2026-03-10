@@ -8,7 +8,6 @@ from typing import Any
 from ...api import Entry, ParseResult
 
 
-_RX_SPEAKER_LINE = re.compile(r"^([^:\n]{1,80}):\s*(.+)$")
 _RX_NUMBER_ONLY = re.compile(r"^\d+$")
 
 
@@ -19,6 +18,12 @@ class YuRisProfile:
     ignore_prefixes: tuple[str, ...] = ()
     ignore_regexes: tuple[str, ...] = ()
     speaker_line_regexes: tuple[str, ...] = (r"^([^:\n]{1,80}):\s*(.+)$",)
+    dialog_pairs: tuple[tuple[str, str], ...] = (
+        ("“", "”"),
+        ('"', '"'),
+        ("「", "」"),
+        ("『", "』"),
+    )
 
 
 DEFAULT_PROFILE = YuRisProfile()
@@ -44,17 +49,11 @@ def _encode_text(text: str, enc: str) -> bytes:
 
 
 def _build_ignore_regexes(profile: YuRisProfile) -> list[re.Pattern[str]]:
-    out: list[re.Pattern[str]] = []
-    for rx in profile.ignore_regexes:
-        out.append(re.compile(rx))
-    return out
+    return [re.compile(rx) for rx in profile.ignore_regexes]
 
 
 def _build_speaker_regexes(profile: YuRisProfile) -> list[re.Pattern[str]]:
-    out: list[re.Pattern[str]] = []
-    for rx in profile.speaker_line_regexes:
-        out.append(re.compile(rx))
-    return out
+    return [re.compile(rx) for rx in profile.speaker_line_regexes]
 
 
 def _looks_like_command(text: str, profile: YuRisProfile, ignore_regexes: list[re.Pattern[str]]) -> bool:
@@ -79,12 +78,32 @@ def _looks_like_command(text: str, profile: YuRisProfile, ignore_regexes: list[r
     return False
 
 
+def _unwrap_dialog(text: str, profile: YuRisProfile) -> tuple[str, str, str]:
+    s = text
+    opens: list[str] = []
+    closes: list[str] = []
+
+    while True:
+        matched = False
+        for op, cl in profile.dialog_pairs:
+            if s.startswith(op) and s.endswith(cl) and len(s) >= len(op) + len(cl):
+                s = s[len(op):-len(cl)]
+                opens.append(op)
+                closes.insert(0, cl)
+                matched = True
+                break
+        if not matched:
+            break
+
+    return s, "".join(opens), "".join(closes)
+
+
 def _split_speaker(
     text: str,
     profile: YuRisProfile,
     speaker_regexes: list[re.Pattern[str]],
     ignore_regexes: list[re.Pattern[str]],
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, str, str]:
     s = text.strip()
 
     for rx in speaker_regexes:
@@ -96,11 +115,13 @@ def _split_speaker(
         body = m.group(2)
 
         if _looks_like_command(speaker, profile, ignore_regexes):
-            return None, text
+            return None, text, "", ""
 
-        return speaker, body
+        body_clean, dialog_open, dialog_close = _unwrap_dialog(body, profile)
+        return speaker, body_clean, dialog_open, dialog_close
 
-    return None, text
+    body_clean, dialog_open, dialog_close = _unwrap_dialog(text, profile)
+    return None, body_clean, dialog_open, dialog_close
 
 
 class YuRisJsonParser:
@@ -150,7 +171,7 @@ class YuRisJsonParser:
                 if _looks_like_command(raw, self.profile, self._ignore_regexes):
                     continue
 
-                speaker, body = _split_speaker(
+                speaker, body, dialog_open, dialog_close = _split_speaker(
                     raw,
                     self.profile,
                     self._speaker_regexes,
@@ -171,6 +192,8 @@ class YuRisJsonParser:
                             "item_index": idx,
                             "has_speaker_prefix": speaker is not None,
                             "speaker_prefix": f"{speaker}: " if speaker else "",
+                            "dialog_open": dialog_open,
+                            "dialog_close": dialog_close,
                             "original_raw": raw,
                         },
                     )
@@ -195,7 +218,7 @@ class YuRisJsonParser:
             if not isinstance(items, list):
                 continue
 
-            for idx, raw in enumerate(items):
+            for idx, _raw in enumerate(items):
                 key = f"{block_id}:{idx}"
                 ent = by_key.get(key)
                 if ent is None:
@@ -204,7 +227,12 @@ class YuRisJsonParser:
                 meta = ent.meta or {}
                 has_speaker_prefix = bool(meta.get("has_speaker_prefix"))
                 speaker_prefix = str(meta.get("speaker_prefix") or "")
+                dialog_open = str(meta.get("dialog_open") or "")
+                dialog_close = str(meta.get("dialog_close") or "")
                 new_text = ent.text or ""
+
+                if dialog_open or dialog_close:
+                    new_text = f"{dialog_open}{new_text}{dialog_close}"
 
                 if has_speaker_prefix:
                     items[idx] = f"{speaker_prefix}{new_text}"
