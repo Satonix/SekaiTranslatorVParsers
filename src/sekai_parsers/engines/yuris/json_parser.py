@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from ...api import Entry, ParseResult
 
@@ -17,7 +16,7 @@ class YuRisProfile:
     ignore_exact: tuple[str, ...] = ()
     ignore_prefixes: tuple[str, ...] = ()
     ignore_regexes: tuple[str, ...] = ()
-    speaker_line_regexes: tuple[str, ...] = (r"^([^:\n]{1,80}):\s*(.+)$",)
+    speaker_line_regexes: tuple[str, ...] = (r"^([^:\n]{1,40}):\s*(.+)$",)
     dialog_pairs: tuple[tuple[str, str], ...] = (
         ("“", "”"),
         ('"', '"'),
@@ -106,9 +105,6 @@ def _looks_like_speaker_name(s: str) -> bool:
     if len(s) > 32:
         return False
 
-    if s[0].isspace():
-        return False
-
     if s.count(" ") > 2:
         return False
 
@@ -152,6 +148,7 @@ def _split_speaker(
 
     body_clean, dialog_open, dialog_close = _unwrap_dialog(text, profile)
     return None, body_clean, dialog_open, dialog_close
+
 
 class YuRisJsonParser:
     extensions = (".json",)
