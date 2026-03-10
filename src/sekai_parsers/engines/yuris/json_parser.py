@@ -98,6 +98,33 @@ def _unwrap_dialog(text: str, profile: YuRisProfile) -> tuple[str, str, str]:
     return s, "".join(opens), "".join(closes)
 
 
+def _looks_like_speaker_name(s: str) -> bool:
+    s = s.strip()
+    if not s:
+        return False
+
+    if len(s) > 32:
+        return False
+
+    if s[0].isspace():
+        return False
+
+    if s.count(" ") > 2:
+        return False
+
+    if any(ch in s for ch in ".!?;()[]{}=/\\"):
+        return False
+
+    parts = s.split()
+    for part in parts:
+        if not part:
+            return False
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_\-']*", part):
+            return False
+
+    return True
+
+
 def _split_speaker(
     text: str,
     profile: YuRisProfile,
@@ -114,6 +141,9 @@ def _split_speaker(
         speaker = m.group(1).strip()
         body = m.group(2)
 
+        if not _looks_like_speaker_name(speaker):
+            continue
+
         if _looks_like_command(speaker, profile, ignore_regexes):
             return None, text, "", ""
 
@@ -122,7 +152,6 @@ def _split_speaker(
 
     body_clean, dialog_open, dialog_close = _unwrap_dialog(text, profile)
     return None, body_clean, dialog_open, dialog_close
-
 
 class YuRisJsonParser:
     extensions = (".json",)

@@ -26,7 +26,7 @@ EUPHORIA_PROFILE = YuRisProfile(
         r"^[A-Z0-9_]{2,12}$",
     ),
     speaker_line_regexes=(
-        r"^([^:\n]{1,80}):\s*(.+)$",
+        r"^([^:\n]{1,40}):\s*(.+)$",
     ),
     dialog_pairs=(
         ("“", "”"),
