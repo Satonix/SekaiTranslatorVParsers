@@ -7,7 +7,5 @@ EF_PROFILE = MusicaProfile(
     dialog_pairs=(
         ("挌", "拮"),
         ("“", "”"),
-        ("≪", "≫"),
-        ("‘", "’"),
     ),
 )

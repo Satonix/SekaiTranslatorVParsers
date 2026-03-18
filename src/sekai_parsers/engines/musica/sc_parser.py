@@ -55,7 +55,6 @@ DEFAULT_PROFILE = MusicaProfile(
 )
 
 _COMMON_DIALOG_PAIRS: tuple[tuple[str, str], ...] = (
-    ("挌", "拮"),
     ("“", "”"),
     ("\"", "\""),
     ("「", "」"),
@@ -225,7 +224,13 @@ def _parse_rest_prefix_speaker_and_body(rest: str, profile: MusicaProfile) -> Tu
             cand = m_next.group(1)
             rest_after_cand = m_next.group(3)
 
-            if cand.startswith(("@", "#")):
+            if cand.startswith("#"):
+                speaker = cand[1:].strip()
+                body_raw, suf = _split_suffix(rest_after_cand)
+                prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
+                return prefix, speaker, body_raw, suf
+
+            if cand.startswith("@"):
                 speaker = cand[1:].strip()
                 body_raw, suf = _split_suffix(rest_after_cand)
                 prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
