@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import re
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -37,6 +38,7 @@ _RX_SUFFIX = re.compile(
     r"(?s)^(.*?)(\\(?:[A-Za-z]+[0-9]*))(\\(?:[A-Za-z]+[0-9]*))*?(\s*)$"
 )
 _RX_CONTROL_ONLY = re.compile(r"^\s*(?:\\[A-Za-z]+[0-9]*)+\s*$")
+_RX_CONTROL_OR_SYMBOL_ONLY = re.compile(r"^\s*(?:\\[A-Za-z]+[0-9]*)+\s*(?:[^\sA-Za-z0-9_]+)?\s*$")
 
 _RX_EF_WRAPPER = re.compile(r"^\x81(.)((?:.|\n|\r)*)\x81(.)$", re.DOTALL)
 
@@ -53,6 +55,7 @@ DEFAULT_PROFILE = MusicaProfile(
 )
 
 _COMMON_DIALOG_PAIRS: tuple[tuple[str, str], ...] = (
+    ("挌", "拮"),
     ("“", "”"),
     ("\"", "\""),
     ("「", "」"),
@@ -73,13 +76,19 @@ def _encode_table(s: str) -> str:
 
 
 def _detect_encoding(data: bytes) -> str:
-    for enc in ("utf-8-sig", "utf-8", "cp932", "shift_jis"):
+    if data.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+
+    if all(b < 0x80 for b in data):
+        return "cp932"
+
+    for enc in ("utf-8", "cp932", "shift_jis"):
         try:
             data.decode(enc)
             return enc
         except UnicodeDecodeError:
             pass
-    return "utf-8"
+    return "cp932"
 
 
 def _decode_text(data: bytes) -> tuple[str, str]:
@@ -125,6 +134,36 @@ def _split_lead_tail_ws(s: str) -> Tuple[str, str, str]:
     return lead, core, tail
 
 
+def _strip_wrapped_editor_text(text: str, *, body_lead: str, body_tail: str, dialog_open: str, dialog_close: str) -> str:
+    current = text
+
+    if body_lead and current.startswith(body_lead):
+        current = current[len(body_lead):]
+    if body_tail and current.endswith(body_tail):
+        current = current[:-len(body_tail)]
+
+    if dialog_open and dialog_close and current.startswith(dialog_open) and current.endswith(dialog_close):
+        current = current[len(dialog_open):]
+        current = current[:-len(dialog_close)]
+
+    return current
+
+
+def _all_dialog_pairs(profile: MusicaProfile) -> tuple[tuple[str, str], ...]:
+    profile_pairs = tuple(profile.dialog_pairs or ())
+    return profile_pairs + tuple(
+        p for p in _COMMON_DIALOG_PAIRS if p not in profile_pairs
+    )
+
+
+def _looks_like_dialog_start(text: str, profile: MusicaProfile) -> bool:
+    if not text:
+        return False
+    if text.startswith(""):
+        return True
+    return any(text.startswith(op) for op, _ in _all_dialog_pairs(profile) if op)
+
+
 def _unwrap_known_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, str]:
     if not text:
         return text, "", ""
@@ -133,10 +172,7 @@ def _unwrap_known_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, s
     opens: list[str] = []
     closes: list[str] = []
 
-    profile_pairs = tuple(profile.dialog_pairs or ())
-    all_pairs = profile_pairs + tuple(
-        p for p in _COMMON_DIALOG_PAIRS if p not in profile_pairs
-    )
+    all_pairs = _all_dialog_pairs(profile)
 
     while True:
         matched = False
@@ -167,7 +203,7 @@ def _unwrap_known_dialog(text: str, profile: MusicaProfile) -> Tuple[str, str, s
     return current, "".join(opens), "".join(closes)
 
 
-def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
+def _parse_rest_prefix_speaker_and_body(rest: str, profile: MusicaProfile) -> Tuple[str, str, str, str]:
     rest_no_nl = rest.rstrip("\r\n")
     lead_ws = rest_no_nl[: len(rest_no_nl) - len(rest_no_nl.lstrip(" "))]
     s = rest_no_nl.lstrip(" ")
@@ -175,7 +211,7 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
     if not s:
         return lead_ws, "", "", ""
 
-    if s.startswith(("\x81", '"', "“", "「", "『")):
+    if _looks_like_dialog_start(s, profile):
         body_raw, suf = _split_suffix(s)
         return lead_ws, "", body_raw, suf
 
@@ -193,13 +229,14 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
                 speaker = cand[1:].strip()
                 body_raw, suf = _split_suffix(rest_after_cand)
                 prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
-                return prefix, speaker, body_raw, suf
+                if _looks_like_dialog_start(rest_after_cand, profile) or _RX_CONTROL_ONLY.match(rest_after_cand):
+                    return prefix, speaker, body_raw, suf
 
-            if re.fullmatch(r"[A-Za-z0-9_]+", cand) and rest_after_cand.startswith(("\x81", '"', "“", "「", "『")):
-                speaker = cand.strip()
+            if re.fullmatch(r"[A-Za-z0-9_]+", cand):
                 body_raw, suf = _split_suffix(rest_after_cand)
                 prefix = lead_ws + s[: m_id.start(3) + m_next.start(3)]
-                return prefix, speaker, body_raw, suf
+                if _looks_like_dialog_start(rest_after_cand, profile) or _RX_CONTROL_ONLY.match(rest_after_cand):
+                    return prefix, cand.strip(), body_raw, suf
 
         body_raw, suf = _split_suffix(after_id)
         return prefix_base, "", body_raw, suf
@@ -208,7 +245,7 @@ def _parse_rest_prefix_speaker_and_body(rest: str) -> Tuple[str, str, str, str]:
     if m_sp:
         cand = m_sp.group(1)
         rest_after = m_sp.group(3)
-        if rest_after.startswith(("\x81", '"', "“", "「", "『")):
+        if _looks_like_dialog_start(rest_after, profile) or _RX_CONTROL_ONLY.match(rest_after):
             prefix = lead_ws + s[: m_sp.start(3)]
             body_raw, suf = _split_suffix(rest_after)
             return prefix, cand.strip(), body_raw, suf
@@ -243,12 +280,12 @@ class MusicaScParser:
                 continue
 
             ws, chan, sp1, msgno, sp2, rest, nl = m.groups()
-            prefix, speaker, body_raw, suf = _parse_rest_prefix_speaker_and_body(rest)
+            prefix, speaker, body_raw, suf = _parse_rest_prefix_speaker_and_body(rest, self.profile)
 
             visible_full = _decode_table(body_raw)
             if visible_full == "" or visible_full.strip() == "":
                 continue
-            if _RX_CONTROL_ONLY.match(visible_full):
+            if _RX_CONTROL_ONLY.match(visible_full) or _RX_CONTROL_OR_SYMBOL_ONLY.match(visible_full):
                 continue
 
             body_lead, body_core_raw, body_tail = _split_lead_tail_ws(body_raw)
@@ -323,7 +360,13 @@ class MusicaScParser:
             if repl_eol:
                 body_txt = body_txt[:-len(repl_eol)]
 
-            body_core = body_txt
+            body_core = _strip_wrapped_editor_text(
+                body_txt,
+                body_lead=body_lead,
+                body_tail=body_tail,
+                dialog_open=dialog_open,
+                dialog_close=dialog_close,
+            )
             if dialog_open or dialog_close:
                 body_core = f"{dialog_open}{body_core}{dialog_close}"
 
